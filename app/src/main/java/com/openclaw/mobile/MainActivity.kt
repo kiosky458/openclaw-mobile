@@ -2,64 +2,113 @@ package com.openclaw.mobile
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import androidx.fragment.app.Fragment
+import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.tabs.TabLayout
+import com.google.android.material.tabs.TabLayoutMediator
 import com.openclaw.mobile.ui.chat.ChatFragment
 import com.openclaw.mobile.ui.dashboard.DashboardFragment
+import com.openclaw.mobile.ui.pairing.PairingFragment
+import com.openclaw.mobile.auth.TokenManager
 
+/**
+ * MainActivity - 主活動
+ * 
+ * 包含 4 個 Tab：
+ * - Spark（一般對話）
+ * - Data（數據搜集）⭐
+ * - NumberOne（編碼專家）
+ * - Dash（系統監控）
+ */
 class MainActivity : AppCompatActivity() {
     
-    private lateinit var tabLayout: TabLayout
+    companion object {
+        const val AGENT_SPARK = "spark"
+        const val AGENT_DATA = "data"
+        const val AGENT_NUMBERONE = "numberone"
+    }
     
-    // Agent IDs
-    private val AGENT_SPARK = "spark"
-    private val AGENT_DATA = "data"
-    private val AGENT_NUMBERONE = "numberone"
+    private lateinit var tabLayout: TabLayout
+    private lateinit var viewPager: ViewPager2
+    private lateinit var tokenManager: TokenManager
+    
+    private val tabTitles = arrayOf(
+        "Spark",
+        "Data",
+        "NumberOne",
+        "Dash"
+    )
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         
-        setupTabs()
+        initializeTokenManager()
+        setupUI()
+        checkPairingStatus()
+    }
+    
+    private fun initializeTokenManager() {
+        tokenManager = TokenManager(this)
+    }
+    
+    private fun setupUI() {
+        tabLayout = findViewById(R.id.tab_layout)
+        viewPager = findViewById(R.id.view_pager)
         
-        // 預設顯示第一個 Tab (Spark)
-        if (savedInstanceState == null) {
-            showFragment(ChatFragment.newInstance(AGENT_SPARK, "Spark"))
+        adapter.setupViewPager(viewPager)
+        setupTabLayout()
+    }
+    
+    private fun setupTabLayout() {
+        TabLayoutMediator(tabLayout, viewPager) { tab, position ->
+            tab.text = tabTitles[position]
+        }.attach()
+    }
+    
+    private fun checkPairingStatus() {
+        if (!tokenManager.isPaired()) {
+            // 顯示配對畫面以強制用戶配對
+            showPairingDialog()
         }
     }
     
-    private fun setupTabs() {
-        tabLayout = findViewById(R.id.tabLayout)
-        
-        // 建立 4 個 Tab
-        tabLayout.addTab(tabLayout.newTab().setText(R.string.tab_spark))
-        tabLayout.addTab(tabLayout.newTab().setText(R.string.tab_data))
-        tabLayout.addTab(tabLayout.newTab().setText(R.string.tab_numberone))
-        tabLayout.addTab(tabLayout.newTab().setText(R.string.tab_dash))
-        
-        // Tab 切換監聽
-        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(tab: TabLayout.Tab?) {
-                tab?.let {
-                    val fragment = when (it.position) {
-                        0 -> ChatFragment.newInstance(AGENT_SPARK, "Spark")
-                        1 -> ChatFragment.newInstance(AGENT_DATA, "Data")
-                        2 -> ChatFragment.newInstance(AGENT_NUMBERONE, "NumberOne")
-                        3 -> DashboardFragment.newInstance()
-                        else -> ChatFragment.newInstance(AGENT_SPARK, "Spark")
-                    }
-                    showFragment(fragment)
-                }
+    private fun showPairingDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("需要配對")
+            .setMessage("請先與 OpenClaw 主機配對才能使用")
+            .setPositiveButton("立即配對") { _, _ ->
+                // 切換到配對 Tab
+                viewPager.currentItem = 3 // Dash Tab 可能有配對功能
             }
-            
-            override fun onTabUnselected(tab: TabLayout.Tab?) {}
-            override fun onTabReselected(tab: TabLayout.Tab?) {}
-        })
+            .setNegativeButton("取消") { _, _ ->
+                finish() // 退出應用
+            }
+            .setCancelable(false)
+            .show()
     }
     
-    private fun showFragment(fragment: Fragment) {
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.fragmentContainer, fragment)
-            .commit()
+    /**
+     * Tab 頁面適配器
+     */
+    inner class Adapter : androidx.viewpager2.adapter.FragmentStateAdapter(this) {
+        
+        fun setupViewPager(viewPager: ViewPager2) {
+            viewPager.adapter = this
+        }
+        
+        override fun getItemCount(): Int = 4
+        
+        override fun createFragment(position: Int): androidx.fragment.app.Fragment {
+            return when (position) {
+                0 -> ChatFragment(AGENT_SPARK)
+                1 -> ChatFragment(AGENT_DATA)
+                2 -> ChatFragment(AGENT_NUMBERONE)
+                3 -> DashboardFragment()
+                else -> ChatFragment(AGENT_SPARK)
+            }
+        }
     }
 }
+
+// 廣告類
+private val chatFragments = arrayOfNulls<ChatFragment>(3)

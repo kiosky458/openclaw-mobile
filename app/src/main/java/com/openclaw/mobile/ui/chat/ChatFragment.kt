@@ -1,62 +1,58 @@
 package com.openclaw.mobile.ui.chat
 
+import android.content.pm.PackageManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
+import android.view.View.INVISIBLE
+import android.view.View.VISIBLE
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.ProgressBar
+import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.snackbar.Snackbar
 import com.openclaw.mobile.R
-import com.openclaw.mobile.data.ChatMessage
-import com.openclaw.mobile.data.ChatRepository
-import com.openclaw.mobile.data.MessageStatus
-import com.openclaw.mobile.data.MessageType
+import com.openclaw.mobile.websocket.WebSocketListener
 import com.openclaw.mobile.websocket.WebSocketManager
 import org.json.JSONObject
 
-class ChatFragment : Fragment(), WebSocketManager.MessageListener {
-    
-    private lateinit var agentId: String
-    private lateinit var agentName: String
-    
-    private lateinit var recyclerView: RecyclerView
-    private lateinit var messageInput: EditText
-    private lateinit var sendButton: ImageButton
-    private lateinit var attachButton: ImageButton
-    private lateinit var cameraButton: ImageButton
-    
-    private lateinit var chatAdapter: ChatAdapter
-    private val messages: MutableList<ChatMessage>
-        get() = ChatRepository.getMessages(agentId)
-    
-    private val mainHandler = Handler(Looper.getMainLooper())
+/**
+ * ChatFragment - Agent 聊天介面
+ * 
+ * 支援：
+ * - 即時串流顯示
+ * - 訊息泡泡
+ * - 檔案附件
+ * - 拍照功能
+ */
+class ChatFragment(private val agentId: String) : Fragment(), WebSocketListener {
     
     companion object {
-        private const val ARG_AGENT_ID = "agent_id"
-        private const val ARG_AGENT_NAME = "agent_name"
-        
-        fun newInstance(agentId: String, agentName: String): ChatFragment {
-            return ChatFragment().apply {
-                arguments = Bundle().apply {
-                    putString(ARG_AGENT_ID, agentId)
-                    putString(ARG_AGENT_NAME, agentName)
-                }
-            }
-        }
+        private const val TAG = "ChatFragment"
+        private const val REQUEST_CAMERA_PERMISSION = 1001
+        private const val REQUEST_FILE_PICKER = 1002
     }
     
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        arguments?.let {
-            agentId = it.getString(ARG_AGENT_ID, "spark")
-            agentName = it.getString(ARG_AGENT_NAME, "Spark")
-        }
-    }
+    // UI 元件
+    private lateinit var recyclerView: RecyclerView
+    private lateinit var messageEditText: EditText
+    private lateinit var sendMessageButton: ImageButton
+    private lateinit var attachButton: ImageButton
+    private lateinit var cameraButton: ImageButton
+    private lateinit var progressBar: ProgressBar
+    private lateinit var emptyStateView: View
+    
+    // 系統元件
+    private lateinit var webSocketManager: WebSocketManager
+    private lateinit var messageAdapter: MessageAdapter
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -69,254 +65,196 @@ class ChatFragment : Fragment(), WebSocketManager.MessageListener {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        setupRecyclerView(view)
-        setupInputArea(view)
-        setupWebSocket()
+        initializeWebView()
+        setupUI(view)
+        setupRecyclerView()
+        setupInputControls()
         
-        // 如果沒有訊息，顯示歡迎訊息
-        if (messages.isEmpty()) {
-            addWelcomeMessage()
+        // 檢查配對狀態
+        if (!com.openclaw.mobile.auth.TokenManager(requireContext()).isPaired()) {
+            showPairingRequiredMessage()
         }
     }
     
-    override fun onResume() {
-        super.onResume()
-        // 重新設置 WebSocket 監聽
-        WebSocketManager.getInstance().setMessageListener(this)
+    private fun initializeWebSocket() {
+        webSocketManager = WebSocketManager(this)
+        webSocketManager.connect()
+    }
+    
+    private fun setupUI(view: View) {
+        recyclerView = view.findViewById(R.id.recycler_messages)
+        messageEditText = view.findViewById(R.id.et_message_input)
+        sendMessageButton = view.findViewById(R.id.btn_send_message)
+        attachButton = view.findViewById(R.id.btn_attach_file)
+        cameraButton = view.findViewById(R.id.btn_take_photo)
+        progressBar = view.findViewById(R.id.pb_typing_indicator)
+        emptyStateView = view.findViewById(R.id.empty_state_view)
+        
+        attachButton.setOnClickListener {
+            pickFile()
+        }
+        
+        cameraButton.setOnClickListener {
+            requestCameraPermission()
+        }
+    }
+    
+    private fun setupRecyclerView() {
+        messageAdapter = MessageAdapter()
+        recyclerView.apply {
+            layoutManager = LinearLayoutManager(context)
+            adapter = messageAdapter
+        }
+    }
+    
+    private fun setupInputControls() {
+        messageEditText.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                sendMessage()
+                true
+            } else {
+                false
+            }
+        }
+        
+        sendMessageButton.setOnClickListener {
+            sendMessage()
+        }
+    }
+    
+    private fun sendMessage() {
+        val text = messageEditText.text.toString().trim()
+        if (text.isEmpty()) return
+        
+        // 顯示用戶訊息
+        messageAdapter.addMessage(Message(text, Message.Type.USER))
+        
+        // 清空輸入框
+        messageEditText.text.clear()
+        
+        // 發送 WebSocket 訊息
+        webSocketManager.sendMessageToAgent(agentId, text)
+    }
+    
+    private fun requestCameraPermission() {
+        if (ContextCompat.checkSelfPermission(
+                requireContext(),
+                PackageManager.PERMISSION CAMERA
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(PackageManager.PERMISSION CAMERA),
+                REQUEST_CAMERA_PERMISSION
+            )
+        } else {
+            launchCamera()
+        }
+    }
+    
+    private fun pickFile() {
+        // 開啟文件選擇器
+        val intent = Intent(Intent.ACTION_GET_CONTENT)
+        intent.type = "*/*"
+        startActivityForResult(
+            Intent.createChooser(intent, "選擇檔案"),
+            REQUEST_FILE_PICKER
+        )
+    }
+    
+    private fun launchCamera() {
+        // 開啟相機
+        // TODO: 實現相機邏輯
+        Snackbar.make(requireView(), "相機功能開發中", Snackbar.LENGTH_SHORT).show()
+    }
+    
+    private fun showPairingRequiredMessage() {
+        emptyStateView.visibility = VISIBLE
+        emptyStateView.findViewById<TextView>(R.id.tv_empty_message)
+            .text = "請先與 OpenClaw 主機配對"
+    }
+    
+    override fun onConnected() {
+        runOnUiThread {
+            progressBar.visibility = INVISIBLE
+        }
+    }
+    
+    override fun onMessageReceived(jsonString: String) {
+        runOnUiThread {
+            try {
+                val json = JSONObject(jsonString)
+                val type = json.getString("type")
+                val content = json.optString("content", "")
+                
+                when (type) {
+                    "message" -> {
+                        messageAdapter.addMessage(Message(content, Message.Type.AGENT))
+                    }
+                    "stream" -> {
+                        // 更新串流訊息
+                        val delta = json.optString("delta", "")
+                        val done = json.optBoolean("done", false)
+                        // TODO: 實現串流顯示
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    override fun onStatsReceived(json: org.json.JSONObject) {
+        // 處理系統監控數據
+        // 應該更新 DashboardFragment
+    }
+    
+    override fun onAuthSuccess() {
+        runOnUiThread {
+            progressBar.visibility = INVISIBLE
+        }
+    }
+    
+    override fun onAuthFailed(reason: String) {
+        runOnUiThread {
+            Toast.makeText(context, "配對失敗：$reason", Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    override fun onError(message: String) {
+        runOnUiThread {
+            Snackbar.make(requireView(), "錯誤：$message", Snackbar.LENGTH_LONG).show()
+        }
+    }
+    
+    override fun onConnectionError(error: Throwable) {
+        runOnUiThread {
+            Snackbar.make(
+                requireView(),
+                "連線錯誤：${error.message}",
+                Snackbar.LENGTH_LONG
+            ).show()
+        }
     }
     
     override fun onPause() {
         super.onPause()
-        // 移除監聽避免內存洩漏
+        // 可以暫停 WebSocket
     }
     
-    private fun setupRecyclerView(view: View) {
-        recyclerView = view.findViewById(R.id.recyclerViewMessages)
-        chatAdapter = ChatAdapter(messages)
-        
-        recyclerView.apply {
-            layoutManager = LinearLayoutManager(context).apply {
-                stackFromEnd = true
-            }
-            adapter = chatAdapter
-            
-            // 滾動到最新訊息
-            if (messages.isNotEmpty()) {
-                scrollToPosition(messages.size - 1)
-            }
-        }
-    }
-    
-    private fun setupInputArea(view: View) {
-        messageInput = view.findViewById(R.id.messageInput)
-        sendButton = view.findViewById(R.id.sendButton)
-        attachButton = view.findViewById(R.id.attachButton)
-        cameraButton = view.findViewById(R.id.cameraButton)
-        
-        sendButton.setOnClickListener {
-            val text = messageInput.text.toString().trim()
-            if (text.isNotEmpty()) {
-                sendMessage(text)
-                messageInput.text.clear()
-            }
-        }
-        
-        attachButton.setOnClickListener {
-            // TODO: Phase 4 實作
-        }
-        
-        cameraButton.setOnClickListener {
-            // TODO: Phase 4 實作
-        }
-    }
-    
-    private fun setupWebSocket() {
-        val wsManager = WebSocketManager.getInstance()
-        wsManager.setMessageListener(this)
-        
-        // 如果尚未連接，連接 WebSocket（暫時用 demo token）
-        // 正式版會從配對機制取得 token
-        // wsManager.connect("demo_token")
-    }
-    
-    private fun addWelcomeMessage() {
-        val welcomeText = when (agentId) {
-            "spark" -> "👋 Hi! I'm Spark, your creative assistant. How can I help you today?"
-            "data" -> "📊 你好！我是 Data，你的數據專家。需要什麼資料？"
-            "numberone" -> "🎯 Hello! I'm NumberOne, ready to assist you. What's on your mind?"
-            else -> "Hello! How can I help you?"
-        }
-        
-        val message = ChatMessage(
-            agentId = agentId,
-            content = welcomeText,
-            isUser = false,
-            type = MessageType.SYSTEM
-        )
-        
-        ChatRepository.addMessage(message)
-        chatAdapter.notifyItemInserted(messages.size - 1)
-    }
-    
-    private fun sendMessage(text: String) {
-        // 建立使用者訊息
-        val userMessage = ChatMessage(
-            agentId = agentId,
-            content = text,
-            isUser = true,
-            status = MessageStatus.SENDING
-        )
-        
-        val position = ChatRepository.addMessage(userMessage)
-        chatAdapter.notifyItemInserted(position)
-        recyclerView.scrollToPosition(position)
-        
-        // 發送到 WebSocket
-        WebSocketManager.getInstance().sendMessage(agentId, text)
-        
-        // 更新狀態為已發送
-        mainHandler.postDelayed({
-            ChatRepository.updateMessageStatus(agentId, userMessage.id, MessageStatus.SENT)
-            chatAdapter.notifyMessageChanged(position)
-        }, 100)
-        
-        // 模擬串流回覆（正式版由 WebSocket 觸發）
-        simulateStreamingResponse(text)
+    override fun onDestroyView() {
+        super.onDestroyView()
+        webSocketManager.disconnect()
     }
     
     /**
-     * 模擬串流回覆效果
-     * 正式版會由 WebSocket 的 onTextMessage 觸發
+     * 訊息資料類別
      */
-    private fun simulateStreamingResponse(userMessage: String) {
-        mainHandler.postDelayed({
-            // 開始串流
-            val streamMessage = ChatRepository.startStreamingMessage(agentId)
-            val position = messages.size - 1
-            chatAdapter.notifyItemInserted(position)
-            recyclerView.scrollToPosition(position)
-            
-            // 模擬回覆內容
-            val response = generateDemoResponse(userMessage)
-            var currentIndex = 0
-            
-            // 逐字顯示
-            val streamRunnable = object : Runnable {
-                override fun run() {
-                    if (currentIndex < response.length) {
-                        // 每次追加 1-3 個字元
-                        val chunkSize = (1..3).random()
-                        val endIndex = minOf(currentIndex + chunkSize, response.length)
-                        val chunk = response.substring(currentIndex, endIndex)
-                        
-                        ChatRepository.appendStreamContent(agentId, chunk)
-                        chatAdapter.notifyMessageChanged(position)
-                        recyclerView.scrollToPosition(position)
-                        
-                        currentIndex = endIndex
-                        mainHandler.postDelayed(this, (20..50).random().toLong())
-                    } else {
-                        // 串流完成
-                        ChatRepository.completeStream(agentId)
-                        chatAdapter.notifyMessageChanged(position)
-                    }
-                }
-            }
-            
-            mainHandler.post(streamRunnable)
-            
-        }, 300)
-    }
-    
-    private fun generateDemoResponse(userMessage: String): String {
-        return when (agentId) {
-            "spark" -> "Thanks for your message! I received: \"$userMessage\"\n\nThis is a demo response from Spark. In the real app, responses will come from the server via WebSocket."
-            "data" -> "收到你的訊息：「$userMessage」\n\n這是 Data 的示範回覆。正式版本會透過 WebSocket 從伺服器接收回應。"
-            "numberone" -> "Got it! Your message: \"$userMessage\"\n\nThis is NumberOne's demo response. Real responses will stream from the server."
-            else -> "Response to: $userMessage"
+    data class Message(
+        val content: String,
+        val type: Type
+    ) {
+        enum class Type {
+            USER, AGENT, SYSTEM
         }
-    }
-    
-    // ========== WebSocket MessageListener ==========
-    
-    override fun onTextMessage(message: String) {
-        try {
-            val json = JSONObject(message)
-            val type = json.optString("type")
-            val msgAgentId = json.optString("agentId")
-            
-            // 只處理當前 Agent 的訊息
-            if (msgAgentId != agentId) return
-            
-            mainHandler.post {
-                when (type) {
-                    "stream" -> handleStreamMessage(json)
-                    "message" -> handleCompleteMessage(json)
-                    "error" -> handleErrorMessage(json)
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-    
-    override fun onBinaryMessage(data: ByteArray) {
-        // 處理二進制訊息（檔案下載等）
-    }
-    
-    private fun handleStreamMessage(json: JSONObject) {
-        val delta = json.optString("delta", "")
-        val done = json.optBoolean("done", false)
-        
-        if (ChatRepository.getStreamingMessageId(agentId) == null) {
-            // 開始新的串流訊息
-            ChatRepository.startStreamingMessage(agentId)
-            chatAdapter.notifyItemInserted(messages.size - 1)
-        }
-        
-        // 追加內容
-        val position = ChatRepository.appendStreamContent(agentId, delta)
-        position?.let {
-            chatAdapter.notifyMessageChanged(it)
-            recyclerView.scrollToPosition(it)
-        }
-        
-        // 串流完成
-        if (done) {
-            val completePosition = ChatRepository.completeStream(agentId)
-            completePosition?.let {
-                chatAdapter.notifyMessageChanged(it)
-            }
-        }
-    }
-    
-    private fun handleCompleteMessage(json: JSONObject) {
-        val content = json.optString("content", "")
-        
-        val message = ChatMessage(
-            agentId = agentId,
-            content = content,
-            isUser = false
-        )
-        
-        val position = ChatRepository.addMessage(message)
-        chatAdapter.notifyItemInserted(position)
-        recyclerView.scrollToPosition(position)
-    }
-    
-    private fun handleErrorMessage(json: JSONObject) {
-        val errorText = json.optString("error", "Unknown error")
-        
-        val message = ChatMessage(
-            agentId = agentId,
-            content = "❌ Error: $errorText",
-            isUser = false,
-            type = MessageType.SYSTEM,
-            status = MessageStatus.ERROR
-        )
-        
-        val position = ChatRepository.addMessage(message)
-        chatAdapter.notifyItemInserted(position)
-        recyclerView.scrollToPosition(position)
     }
 }
