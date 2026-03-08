@@ -1,114 +1,191 @@
 package com.openclaw.mobile
 
 import android.os.Bundle
+import android.view.Menu
+import android.view.MenuItem
 import androidx.appcompat.app.AppCompatActivity
-import androidx.viewpager2.widget.ViewPager2
-import com.google.android.material.tabs.TabLayout
-import com.google.android.material.tabs.TabLayoutMediator
-import com.openclaw.mobile.ui.chat.ChatFragment
-import com.openclaw.mobile.ui.dashboard.DashboardFragment
-import com.openclaw.mobile.ui.pairing.PairingFragment
-import com.openclaw.mobile.auth.TokenManager
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.openclaw.mobile.data.ChatMessage
+import com.openclaw.mobile.ui.chat.MessageAdapter
+import com.openclaw.mobile.websocket.WebSocketManager
 
 /**
- * MainActivity - 主活動
+ * MainActivity - Phase 1 簡化版
  * 
- * 包含 4 個 Tab：
- * - Spark（一般對話）
- * - Data（數據搜集）⭐
- * - NumberOne（編碼專家）
- * - Dash（系統監控）
+ * 功能：
+ * - 單一 Spark Chat 介面
+ * - WebSocket 連接
+ * - 基本訊息收發
  */
 class MainActivity : AppCompatActivity() {
     
-    companion object {
-        const val AGENT_SPARK = "spark"
-        const val AGENT_DATA = "data"
-        const val AGENT_NUMBERONE = "numberone"
-    }
+    private lateinit var recyclerView: RecyclerView
+    private lateinit var messageAdapter: MessageAdapter
+    private lateinit var inputField: TextInputEditText
+    private lateinit var sendButton: FloatingActionButton
+    private lateinit var webSocketManager: WebSocketManager
     
-    private lateinit var tabLayout: TabLayout
-    private lateinit var viewPager: ViewPager2
-    private lateinit var tokenManager: TokenManager
-    
-    private val tabTitles = arrayOf(
-        "Spark",
-        "Data",
-        "NumberOne",
-        "Dash"
-    )
+    private val messages = mutableListOf<ChatMessage>()
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         
-        initializeTokenManager()
-        setupUI()
-        checkPairingStatus()
-    }
-    
-    private fun initializeTokenManager() {
-        tokenManager = TokenManager(this)
-    }
-    
-    private fun setupUI() {
-        tabLayout = findViewById(R.id.tab_layout)
-        viewPager = findViewById(R.id.view_pager)
+        // 設定 Toolbar
+        setSupportActionBar(findViewById(R.id.toolbar))
+        supportActionBar?.title = "Spark Chat"
         
-        adapter.setupViewPager(viewPager)
-        setupTabLayout()
+        initializeViews()
+        setupRecyclerView()
+        setupWebSocket()
+        setupListeners()
+        
+        // 測試訊息
+        addSystemMessage("連接至 Spark Agent...")
     }
     
-    private fun setupTabLayout() {
-        TabLayoutMediator(tabLayout, viewPager) { tab, position ->
-            tab.text = tabTitles[position]
-        }.attach()
+    private fun initializeViews() {
+        recyclerView = findViewById(R.id.messages_recycler_view)
+        inputField = findViewById(R.id.message_input)
+        sendButton = findViewById(R.id.send_button)
     }
     
-    private fun checkPairingStatus() {
-        if (!tokenManager.isPaired()) {
-            // 顯示配對畫面以強制用戶配對
-            showPairingDialog()
+    private fun setupRecyclerView() {
+        messageAdapter = MessageAdapter(messages)
+        recyclerView.apply {
+            layoutManager = LinearLayoutManager(this@MainActivity).apply {
+                stackFromEnd = true
+            }
+            adapter = messageAdapter
         }
     }
     
-    private fun showPairingDialog() {
-        android.app.AlertDialog.Builder(this)
-            .setTitle("需要配對")
-            .setMessage("請先與 OpenClaw 主機配對才能使用")
-            .setPositiveButton("立即配對") { _, _ ->
-                // 切換到配對 Tab
-                viewPager.currentItem = 3 // Dash Tab 可能有配對功能
+    private fun setupWebSocket() {
+        // WebSocket 伺服器位置（可設定）
+        val wsUrl = "wss://artiforge.studio/ws/spark"
+        
+        webSocketManager = WebSocketManager(wsUrl, object : WebSocketManager.MessageListener {
+            override fun onMessage(message: String) {
+                runOnUiThread {
+                    addAgentMessage(message)
+                }
             }
-            .setNegativeButton("取消") { _, _ ->
-                finish() // 退出應用
+            
+            override fun onConnected() {
+                runOnUiThread {
+                    addSystemMessage("已連接")
+                    updateConnectionStatus(true)
+                }
             }
-            .setCancelable(false)
-            .show()
+            
+            override fun onDisconnected() {
+                runOnUiThread {
+                    addSystemMessage("連接中斷")
+                    updateConnectionStatus(false)
+                }
+            }
+            
+            override fun onError(error: String) {
+                runOnUiThread {
+                    addSystemMessage("錯誤: $error")
+                }
+            }
+        })
+        
+        webSocketManager.connect()
     }
     
-    /**
-     * Tab 頁面適配器
-     */
-    inner class Adapter : androidx.viewpager2.adapter.FragmentStateAdapter(this) {
-        
-        fun setupViewPager(viewPager: ViewPager2) {
-            viewPager.adapter = this
+    private fun setupListeners() {
+        sendButton.setOnClickListener {
+            sendMessage()
         }
         
-        override fun getItemCount(): Int = 4
+        inputField.setOnEditorActionListener { _, _, _ ->
+            sendMessage()
+            true
+        }
+    }
+    
+    private fun sendMessage() {
+        val text = inputField.text?.toString()?.trim() ?: ""
+        if (text.isEmpty()) return
         
-        override fun createFragment(position: Int): androidx.fragment.app.Fragment {
-            return when (position) {
-                0 -> ChatFragment(AGENT_SPARK)
-                1 -> ChatFragment(AGENT_DATA)
-                2 -> ChatFragment(AGENT_NUMBERONE)
-                3 -> DashboardFragment()
-                else -> ChatFragment(AGENT_SPARK)
+        // 顯示用戶訊息
+        addUserMessage(text)
+        
+        // 發送到 WebSocket
+        webSocketManager.sendMessage(text)
+        
+        // 清空輸入框
+        inputField.text?.clear()
+    }
+    
+    private fun addUserMessage(text: String) {
+        val message = ChatMessage(
+            id = System.currentTimeMillis().toString(),
+            content = text,
+            isFromUser = true,
+            timestamp = System.currentTimeMillis()
+        )
+        messages.add(message)
+        messageAdapter.notifyItemInserted(messages.size - 1)
+        recyclerView.scrollToPosition(messages.size - 1)
+    }
+    
+    private fun addAgentMessage(text: String) {
+        val message = ChatMessage(
+            id = System.currentTimeMillis().toString(),
+            content = text,
+            isFromUser = false,
+            timestamp = System.currentTimeMillis()
+        )
+        messages.add(message)
+        messageAdapter.notifyItemInserted(messages.size - 1)
+        recyclerView.scrollToPosition(messages.size - 1)
+    }
+    
+    private fun addSystemMessage(text: String) {
+        val message = ChatMessage(
+            id = System.currentTimeMillis().toString(),
+            content = text,
+            isFromUser = false,
+            timestamp = System.currentTimeMillis(),
+            isSystem = true
+        )
+        messages.add(message)
+        messageAdapter.notifyItemInserted(messages.size - 1)
+        recyclerView.scrollToPosition(messages.size - 1)
+    }
+    
+    private fun updateConnectionStatus(connected: Boolean) {
+        supportActionBar?.subtitle = if (connected) "已連接" else "未連接"
+    }
+    
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
+    
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_reconnect -> {
+                webSocketManager.reconnect()
+                true
             }
+            R.id.action_clear -> {
+                messages.clear()
+                messageAdapter.notifyDataSetChanged()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
         }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        webSocketManager.disconnect()
     }
 }
-
-// 廣告類
-private val chatFragments = arrayOfNulls<ChatFragment>(3)
