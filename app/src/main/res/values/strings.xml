@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenClaw</string>
+    
+    <!-- Tab names -->
+    <string name="tab_spark">Spark</string>
+    <string name="tab_data">Data</string>
+    <string name="tab_numberone">NumberOne</string>
+    <string name="tab_dash">Dash</string>
+    
+    <!-- Chat -->
+    <string name="hint_message">輸入訊息...</string>
+    <string name="send">發送</string>
+    <string name="attach">附件</string>
+    <string name="camera">拍照</string>
+    
+    <!-- Pairing -->
+    <string name="pairing_title">配對裝置</string>
+    <string name="pairing_code">配對碼：%s</string>
+    <string name="pairing_instruction">請在主機端輸入此配對碼</string>
+    <string name="pairing_waiting">等待授權...</string>
+    <string name="pairing_success">配對成功！</string>
+    <string name="pairing_failed">配對失敗，請重試</string>
+    
+    <!-- Dashboard -->
+    <string name="dash_cpu">CPU</string>
+    <string name="dash_gpu">GPU</string>
+    <string name="dash_memory">記憶體</string>
+    <string name="dash_temp">溫度</string>
+    <string name="dash_disk">內存</string>
+    
+    <!-- File -->
+    <string name="downloading">下載中...</string>
+    <string name="download_complete">下載完成</string>
+    <string name="upload_failed">上傳失敗</string>
+    
+    <!-- Connection -->
+    <string name="connecting">連接中...</string>
+    <string name="connected">已連接</string>
+    <string name="disconnected">已斷線</string>
+    <string name="reconnecting">重新連接...</string>
+</resources>

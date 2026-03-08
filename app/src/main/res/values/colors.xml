@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material You 配色 -->
+    <color name="primary">#4A9EFF</color>
+    <color name="primary_dark">#3A7ECF</color>
+    <color name="accent">#FF6B6B</color>
+    
+    <!-- 背景 -->
+    <color name="background">#1A1A1A</color>
+    <color name="surface">#2C2C2C</color>
+    <color name="surface_variant">#3C3C3C</color>
+    
+    <!-- 文字 -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="text_disabled">#666666</color>
+    
+    <!-- 訊息泡泡 -->
+    <color name="message_user">#4A9EFF</color>
+    <color name="message_agent">#3C3C3C</color>
+    
+    <!-- 狀態 -->
+    <color name="success">#4CAF50</color>
+    <color name="warning">#FFC107</color>
+    <color name="error">#F44336</color>
+    
+    <!-- 系統 -->
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="transparent">#00000000</color>
+</resources>
