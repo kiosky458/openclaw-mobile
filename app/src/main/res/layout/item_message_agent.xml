@@ -1,55 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:gravity="start"
-    android:orientation="vertical"
-    android:paddingHorizontal="16dp"
+    android:paddingHorizontal="12dp"
     android:paddingVertical="4dp">
 
+    <!-- 訊息泡泡 -->
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:id="@+id/messageBubble"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="48dp"
+        android:layout_marginEnd="60dp"
         android:background="@drawable/bg_message_agent"
         android:orientation="vertical"
         android:paddingHorizontal="12dp"
-        android:paddingVertical="8dp">
+        android:paddingVertical="8dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintWidth_max="wrap"
+        app:layout_constraintHorizontal_bias="0.0">
 
+        <!-- 文字內容 -->
         <TextView
             android:id="@+id/textContent"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="#333333"
-            android:textSize="15sp" />
+            android:textSize="15sp"
+            android:lineSpacingExtra="2dp" />
 
-        <!-- 檔案容器 -->
+        <!-- 檔案區塊 -->
         <LinearLayout
             android:id="@+id/fileContainer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
             android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="6dp"
             android:visibility="gone">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@android:drawable/ic_menu_attachment"
-                android:tint="#666666" />
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/ic_file"
+                app:tint="#666666" />
 
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:layout_marginStart="8dp">
 
                 <TextView
                     android:id="@+id/fileName"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="#333333"
-                    android:textSize="13sp" />
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="middle" />
 
                 <TextView
                     android:id="@+id/fileSize"
@@ -57,19 +68,28 @@
                     android:layout_height="wrap_content"
                     android:textColor="#999999"
                     android:textSize="11sp" />
-
             </LinearLayout>
         </LinearLayout>
 
     </LinearLayout>
 
-    <!-- 時間和串流狀態 -->
+    <!-- 底部：時間 + 串流指示器 -->
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
+        android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:layout_marginTop="2dp"
+        app:layout_constraintStart_toStartOf="@id/messageBubble"
+        app:layout_constraintTop_toBottomOf="@id/messageBubble">
+
+        <ProgressBar
+            android:id="@+id/streamingIndicator"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:layout_marginEnd="4dp"
+            android:visibility="gone"
+            style="?android:attr/progressBarStyleSmall" />
 
         <TextView
             android:id="@+id/textTime"
@@ -77,23 +97,6 @@
             android:layout_height="wrap_content"
             android:textColor="#999999"
             android:textSize="11sp" />
-
-        <ProgressBar
-            android:id="@+id/streamingIndicator"
-            android:layout_width="12dp"
-            android:layout_height="12dp"
-            android:layout_marginStart="4dp"
-            android:indeterminate="true"
-            android:visibility="gone"
-            style="?android:attr/progressBarStyleSmall" />
-
-        <ImageView
-            android:id="@+id/statusIndicator"
-            android:layout_width="12dp"
-            android:layout_height="12dp"
-            android:layout_marginStart="4dp"
-            android:visibility="gone" />
-
     </LinearLayout>
 
-</LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>
