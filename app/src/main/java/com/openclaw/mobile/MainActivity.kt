@@ -128,7 +128,7 @@ class MainActivity : AppCompatActivity(), SocketIOManager.MessageListener {
         runOnUiThread {
             // 將 SocketIO 消息轉為 UI 消息
             val chatMessage = ChatMessage(
-                id = message.id.toLong(),
+                id = message.id.toLong().toString(),
                 content = message.content,
                 isFromUser = (message.from == "user"),
                 timestamp = System.currentTimeMillis()
@@ -163,7 +163,7 @@ class MainActivity : AppCompatActivity(), SocketIOManager.MessageListener {
     
     private fun addUserMessage(content: String) {
         val message = ChatMessage(
-            id = System.currentTimeMillis(),
+            id = System.currentTimeMillis().toString(),
             content = content,
             isFromUser = true,
             timestamp = System.currentTimeMillis()
@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity(), SocketIOManager.MessageListener {
     
     private fun addSystemMessage(content: String) {
         val message = ChatMessage(
-            id = System.currentTimeMillis(),
+            id = System.currentTimeMillis().toString(),
             content = content,
             isFromUser = false,
             timestamp = System.currentTimeMillis()

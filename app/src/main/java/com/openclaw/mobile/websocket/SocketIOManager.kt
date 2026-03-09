@@ -161,8 +161,8 @@ class SocketIOManager(
             on(Socket.EVENT_CONNECT, onConnect)
             on(Socket.EVENT_DISCONNECT, onDisconnect)
             on(Socket.EVENT_CONNECT_ERROR, onConnectError)
-            on(Socket.EVENT_RECONNECT, onReconnect)
-            on(Socket.EVENT_RECONNECTING, onReconnecting)
+            on("reconnect", onReconnect)
+            on("reconnecting", onReconnecting)
             
             // 自定義事件
             on("connected", onServerConnected)
