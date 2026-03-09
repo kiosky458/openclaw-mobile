@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenClaw Mobile HTTP API Server
+After=network.target
+
+[Service]
+Type=simple
+User=kiosky
+WorkingDirectory=/home/kiosky/.openclaw-data/workspace/openclaw-mobile/server
+ExecStart=/usr/bin/python3 /home/kiosky/.openclaw-data/workspace/openclaw-mobile/server/openclaw_mobile_server.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/openclaw-mobile/server.log
+StandardError=append:/var/log/openclaw-mobile/error.log
+
+Environment="PATH=/home/kiosky/.nvm/versions/node/v22.22.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="NODE_PATH=/home/kiosky/.nvm/versions/node/v22.22.0/lib/node_modules"
+
+[Install]
+WantedBy=multi-user.target
