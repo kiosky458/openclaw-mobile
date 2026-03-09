@@ -271,54 +271,67 @@ def process_agent_message(device_id, agent_id, message):
         }
         agent = agent_map.get(agent_id, 'main')
         
+        # 使用獨立的 session ID 避免鎖定衝突
+        session_id = f"mobile_{device_id}_{int(time.time())}"
+        
         # 使用 openclaw agent 指令
-        cmd = [OPENCLAW_BIN, 'agent', '--agent', agent, '--message', message]
+        cmd = [OPENCLAW_BIN, 'agent', '--agent', agent, '--session-id', session_id, '--message', message]
         
         logging.info(f"🚀 執行指令：{' '.join(cmd)}")
         
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-        
-        if device_id not in active_conversations:
-            active_conversations[device_id] = {'messages': [], 'last_activity': time.time()}
-        
-        conversation = active_conversations[device_id]
-        message_count_before = len(conversation['messages'])
-        
-        # 收集輸出（stdout + stderr 都收集）
-        for line in iter(process.stdout.readline, ''):
-            if line:
-                line = line.rstrip()
-                # 過濾掉 OpenClaw 的 banner 和日誌訊息
-                if not line.startswith('🦞') and not line.startswith('error:') and line.strip():
-                    conversation['messages'].append({
-                        'id': time.time(),
-                        'content': line,
-                        'from': 'agent',
-                        'timestamp': str(datetime.now())
-                    })
-        
-        process.wait()
-        
-        # 如果沒有輸出，檢查 stderr
-        if len(conversation['messages']) == message_count_before:
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                logging.warning(f"⚠️ Agent stderr：{stderr_output}")
+        # 使用 communicate() 等待完整輸出（最多 60 秒）
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            stdout, stderr = process.communicate(timeout=60)
+            
+            if device_id not in active_conversations:
+                active_conversations[device_id] = {'messages': [], 'last_activity': time.time()}
+            
+            conversation = active_conversations[device_id]
+            message_count_before = len(conversation['messages'])
+            
+            # 處理 stdout
+            if stdout:
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    # 過濾掉 OpenClaw 的 banner 和日誌訊息
+                    if line and not line.startswith('🦞') and not line.startswith('[') and not line.startswith('error:'):
+                        conversation['messages'].append({
+                            'id': time.time(),
+                            'content': line,
+                            'from': 'agent',
+                            'timestamp': str(datetime.now())
+                        })
+            
+            # 如果沒有輸出，檢查 stderr
+            if len(conversation['messages']) == message_count_before and stderr:
+                logging.warning(f"⚠️ Agent stderr：{stderr[:500]}")
                 conversation['messages'].append({
                     'id': time.time(),
-                    'content': f'Agent 錯誤：{stderr_output}',
+                    'content': f'Agent 錯誤：{stderr[:500]}',
                     'from': 'system',
                     'timestamp': str(datetime.now())
                 })
-        
-        new_messages = len(conversation['messages']) - message_count_before
-        logging.info(f"✅ {agent_id} 回應完成：{new_messages} 條新訊息")
+            
+            new_messages = len(conversation['messages']) - message_count_before
+            logging.info(f"✅ {agent_id} 回應完成：{new_messages} 條新訊息")
+            
+        except subprocess.TimeoutExpired:
+            process.kill()
+            logging.error(f"⏱️ Agent 執行超時（60 秒）")
+            if device_id in active_conversations:
+                active_conversations[device_id]['messages'].append({
+                    'id': time.time(),
+                    'content': 'Agent 回應超時（超過 60 秒），請稍後再試',
+                    'from': 'system',
+                    'timestamp': str(datetime.now())
+                })
         
     except Exception as e:
         logging.error(f"❌ Agent 通訊錯誤：{e}")
