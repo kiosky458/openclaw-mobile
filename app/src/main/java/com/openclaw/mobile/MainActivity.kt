@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -11,23 +12,23 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.openclaw.mobile.data.ChatMessage
 import com.openclaw.mobile.ui.chat.MessageAdapter
-import com.openclaw.mobile.http.HTTPPollManager
+import com.openclaw.mobile.websocket.SocketIOManager
 
 /**
- * MainActivity - HTTP 輪詢版本
+ * MainActivity - WebSocket 即時版本
  * 
  * 功能：
  * - 單一 Spark Chat 介面
- * - HTTP 輪詢連接（取代 WebSocket）
- * - 基本訊息收發
+ * - WebSocket 即時雙向通訊（取代 HTTP 輪詢）
+ * - 流式訊息接收
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), SocketIOManager.MessageListener {
     
     private lateinit var recyclerView: RecyclerView
     private lateinit var messageAdapter: MessageAdapter
     private lateinit var inputField: TextInputEditText
     private lateinit var sendButton: FloatingActionButton
-    private lateinit var httpPollManager: HTTPPollManager
+    private lateinit var socketIOManager: SocketIOManager
     
     private val messages = mutableListOf<ChatMessage>()
     private lateinit var deviceId: String
@@ -44,15 +45,15 @@ class MainActivity : AppCompatActivity() {
         
         // 設定 Toolbar
         setSupportActionBar(findViewById(R.id.toolbar))
-        supportActionBar?.title = "Spark Chat"
+        supportActionBar?.title = "Spark Chat (WebSocket)"
         
         initializeViews()
         setupRecyclerView()
-        setupHTTPPoll()
+        setupWebSocket()
         setupListeners()
         
         // 測試訊息
-        addSystemMessage("連接至 Spark Agent...")
+        addSystemMessage("正在連接 WebSocket...")
     }
     
     private fun initializeViews() {
@@ -71,78 +72,99 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    private fun setupHTTPPoll() {
-        // HTTP 伺服器位置（可設定）
-        val serverUrl = "http://59.125.35.234:5001"  // 或使用 artiforge.studio
+    private fun setupWebSocket() {
+        // WebSocket 伺服器位置
+        val serverUrl = "http://59.125.35.234:5001"
         
-        httpPollManager = HTTPPollManager(
-            baseUrl = serverUrl,
+        socketIOManager = SocketIOManager(
+            serverUrl = serverUrl,
             deviceId = "android_$deviceId",
-            listener = object : HTTPPollManager.MessageListener {
-                override fun onMessage(message: String, from: String) {
-                    runOnUiThread {
-                        if (from == "agent") {
-                            addAgentMessage(message)
-                        } else {
-                            addSystemMessage(message)
-                        }
-                    }
-                }
-                
-                override fun onConnected() {
-                    runOnUiThread {
-                        addSystemMessage("已連接")
-                        updateConnectionStatus(true)
-                    }
-                }
-                
-                override fun onDisconnected() {
-                    runOnUiThread {
-                        addSystemMessage("連接中斷")
-                        updateConnectionStatus(false)
-                    }
-                }
-                
-                override fun onError(error: String) {
-                    runOnUiThread {
-                        addSystemMessage("錯誤: $error")
-                    }
-                }
-            }
+            listener = this
         )
         
-        httpPollManager.start()
+        // 開始連接
+        socketIOManager.connect()
     }
     
     private fun setupListeners() {
         sendButton.setOnClickListener {
-            sendMessage()
-        }
-        
-        inputField.setOnEditorActionListener { _, _, _ ->
-            sendMessage()
-            true
+            val message = inputField.text.toString().trim()
+            if (message.isNotEmpty()) {
+                sendMessage(message)
+                inputField.text?.clear()
+            }
         }
     }
     
-    private fun sendMessage() {
-        val text = inputField.text?.toString()?.trim() ?: ""
-        if (text.isEmpty()) return
-        
+    // ==================== 發送訊息 ====================
+    
+    private fun sendMessage(message: String) {
         // 顯示用戶訊息
-        addUserMessage(text)
+        addUserMessage(message)
         
-        // 發送到 Server（HTTP POST）
-        httpPollManager.sendMessage(text, "spark")
-        
-        // 清空輸入框
-        inputField.text?.clear()
+        // 發送到 Agent
+        socketIOManager.sendMessage("spark", message)
     }
     
-    private fun addUserMessage(text: String) {
+    // ==================== SocketIOManager.MessageListener 實現 ====================
+    
+    override fun onConnected() {
+        runOnUiThread {
+            addSystemMessage("✅ 已連接")
+            supportActionBar?.subtitle = "已連接"
+            Toast.makeText(this, "已連接到 Server", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    override fun onDisconnected() {
+        runOnUiThread {
+            addSystemMessage("❌ 連接斷開")
+            supportActionBar?.subtitle = "未連接"
+            Toast.makeText(this, "連接斷開", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    override fun onMessageReceived(message: SocketIOManager.ChatMessage) {
+        runOnUiThread {
+            // 將 SocketIO 消息轉為 UI 消息
+            val chatMessage = ChatMessage(
+                id = message.id.toLong(),
+                content = message.content,
+                isFromUser = (message.from == "user"),
+                timestamp = System.currentTimeMillis()
+            )
+            
+            messages.add(chatMessage)
+            messageAdapter.notifyItemInserted(messages.size - 1)
+            recyclerView.scrollToPosition(messages.size - 1)
+        }
+    }
+    
+    override fun onError(error: String) {
+        runOnUiThread {
+            addSystemMessage("❌ 錯誤：$error")
+            Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    override fun onAgentProcessing() {
+        runOnUiThread {
+            addSystemMessage("⏳ Agent 處理中...")
+        }
+    }
+    
+    override fun onAgentDone(messageCount: Int) {
+        runOnUiThread {
+            addSystemMessage("✅ Agent 完成（$messageCount 條訊息）")
+        }
+    }
+    
+    // ==================== UI 輔助方法 ====================
+    
+    private fun addUserMessage(content: String) {
         val message = ChatMessage(
-            id = System.currentTimeMillis().toString(),
-            content = text,
+            id = System.currentTimeMillis(),
+            content = content,
             isFromUser = true,
             timestamp = System.currentTimeMillis()
         )
@@ -151,10 +173,10 @@ class MainActivity : AppCompatActivity() {
         recyclerView.scrollToPosition(messages.size - 1)
     }
     
-    private fun addAgentMessage(text: String) {
+    private fun addSystemMessage(content: String) {
         val message = ChatMessage(
-            id = System.currentTimeMillis().toString(),
-            content = text,
+            id = System.currentTimeMillis(),
+            content = content,
             isFromUser = false,
             timestamp = System.currentTimeMillis()
         )
@@ -163,46 +185,35 @@ class MainActivity : AppCompatActivity() {
         recyclerView.scrollToPosition(messages.size - 1)
     }
     
-    private fun addSystemMessage(text: String) {
-        val message = ChatMessage(
-            id = System.currentTimeMillis().toString(),
-            content = text,
-            isFromUser = false,
-            timestamp = System.currentTimeMillis(),
-            isSystem = true
-        )
-        messages.add(message)
-        messageAdapter.notifyItemInserted(messages.size - 1)
-        recyclerView.scrollToPosition(messages.size - 1)
-    }
+    // ==================== 選單 ====================
     
-    private fun updateConnectionStatus(connected: Boolean) {
-        supportActionBar?.subtitle = if (connected) "已連接（HTTP）" else "未連接"
-    }
-    
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         return true
     }
     
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
-            R.id.action_reconnect -> {
-                httpPollManager.stop()
-                httpPollManager.start()
-                true
-            }
             R.id.action_clear -> {
                 messages.clear()
                 messageAdapter.notifyDataSetChanged()
+                addSystemMessage("訊息已清空")
+                true
+            }
+            R.id.action_reconnect -> {
+                socketIOManager.disconnect()
+                socketIOManager.connect()
+                addSystemMessage("正在重新連接...")
                 true
             }
             else -> super.onOptionsItemSelected(item)
         }
     }
     
+    // ==================== 生命週期 ====================
+    
     override fun onDestroy() {
         super.onDestroy()
-        httpPollManager.stop()
+        socketIOManager.disconnect()
     }
 }

@@ -87,6 +87,7 @@ def mobile_poll():
     last_message_id = data.get('last_message_id', 0)
     
     if device_id not in active_conversations:
+        logging.debug(f"📭 輪詢：{device_id} 無對話記錄")
         return jsonify({'messages': []})
     
     conversation = active_conversations[device_id]
@@ -97,6 +98,11 @@ def mobile_poll():
         msg for msg in conversation['messages']
         if msg['id'] > last_message_id
     ]
+    
+    # 調試日誌
+    total_msgs = len(conversation['messages'])
+    new_count = len(new_messages)
+    logging.info(f"📬 輪詢：{device_id[:20]}... last_id={last_message_id:.2f} 總訊息={total_msgs} 新訊息={new_count}")
     
     return jsonify({'messages': new_messages})
 
@@ -261,7 +267,7 @@ def control_subagents():
 # ============================================================================
 
 def process_agent_message(device_id, agent_id, message):
-    """處理 Agent 訊息（背景執行）"""
+    """處理 Agent 訊息（背景執行，實時流式輸出）"""
     try:
         # 根據 agent_id 選擇 agent（目前只有 main agent）
         agent_map = {
@@ -279,56 +285,66 @@ def process_agent_message(device_id, agent_id, message):
         
         logging.info(f"🚀 執行指令：{' '.join(cmd)}")
         
-        # 使用 communicate() 等待完整輸出（最多 60 秒）
+        # 使用 Popen 實時讀取輸出
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1  # 行緩衝
+        )
+        
+        if device_id not in active_conversations:
+            active_conversations[device_id] = {'messages': [], 'last_activity': time.time()}
+        
+        conversation = active_conversations[device_id]
+        message_count_before = len(conversation['messages'])
+        
+        # 實時逐行讀取 stdout
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            for line in iter(process.stdout.readline, ''):
+                if not line:
+                    break
+                
+                line = line.rstrip()
+                
+                # 過濾掉 OpenClaw 的 banner 和日誌訊息
+                if line and not line.startswith('🦞') and not line.startswith('[') and not line.startswith('error:'):
+                    # 立即添加到消息隊列（實現流式效果）
+                    conversation['messages'].append({
+                        'id': time.time(),
+                        'content': line,
+                        'from': 'agent',
+                        'timestamp': str(datetime.now()),
+                        'streaming': True  # 標記為流式消息
+                    })
+                    conversation['last_activity'] = time.time()
             
-            stdout, stderr = process.communicate(timeout=120)
+            # 等待進程結束（最多 120 秒）
+            process.wait(timeout=120)
             
-            if device_id not in active_conversations:
-                active_conversations[device_id] = {'messages': [], 'last_activity': time.time()}
-            
-            conversation = active_conversations[device_id]
-            message_count_before = len(conversation['messages'])
-            
-            # 處理 stdout
-            if stdout:
-                for line in stdout.splitlines():
-                    line = line.strip()
-                    # 過濾掉 OpenClaw 的 banner 和日誌訊息
-                    if line and not line.startswith('🦞') and not line.startswith('[') and not line.startswith('error:'):
-                        conversation['messages'].append({
-                            'id': time.time(),
-                            'content': line,
-                            'from': 'agent',
-                            'timestamp': str(datetime.now())
-                        })
-            
-            # 如果沒有輸出，檢查 stderr
-            if len(conversation['messages']) == message_count_before and stderr:
-                logging.warning(f"⚠️ Agent stderr：{stderr[:500]}")
-                conversation['messages'].append({
-                    'id': time.time(),
-                    'content': f'Agent 錯誤：{stderr[:500]}',
-                    'from': 'system',
-                    'timestamp': str(datetime.now())
-                })
+            # 如果沒有任何輸出，檢查 stderr
+            if len(conversation['messages']) == message_count_before:
+                stderr = process.stderr.read()
+                if stderr:
+                    logging.warning(f"⚠️ Agent stderr：{stderr[:500]}")
+                    conversation['messages'].append({
+                        'id': time.time(),
+                        'content': f'Agent 錯誤：{stderr[:500]}',
+                        'from': 'system',
+                        'timestamp': str(datetime.now())
+                    })
             
             new_messages = len(conversation['messages']) - message_count_before
-            logging.info(f"✅ {agent_id} 回應完成：{new_messages} 條新訊息")
+            logging.info(f"✅ {agent_id} 回應完成：{new_messages} 條新訊息（流式）")
             
         except subprocess.TimeoutExpired:
             process.kill()
-            logging.error(f"⏱️ Agent 執行超時（60 秒）")
+            logging.error(f"⏱️ Agent 執行超時（120 秒）")
             if device_id in active_conversations:
                 active_conversations[device_id]['messages'].append({
                     'id': time.time(),
-                    'content': 'Agent 回應超時（超過 60 秒），請稍後再試',
+                    'content': 'Agent 回應超時（超過 120 秒），請稍後再試',
                     'from': 'system',
                     'timestamp': str(datetime.now())
                 })
@@ -342,8 +358,6 @@ def process_agent_message(device_id, agent_id, message):
                 'from': 'system',
                 'timestamp': str(datetime.now())
             })
-
-
 def get_system_info():
     """取得系統資訊（CPU、記憶體、溫度）"""
     try:
