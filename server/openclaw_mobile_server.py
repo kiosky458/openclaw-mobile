@@ -288,7 +288,7 @@ def process_agent_message(device_id, agent_id, message):
                 text=True
             )
             
-            stdout, stderr = process.communicate(timeout=60)
+            stdout, stderr = process.communicate(timeout=120)
             
             if device_id not in active_conversations:
                 active_conversations[device_id] = {'messages': [], 'last_activity': time.time()}
