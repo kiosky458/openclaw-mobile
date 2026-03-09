@@ -51,6 +51,7 @@ class SocketIOManager(
     private var isConnecting = false
     private var isRegistered = false
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var lastMessageId: Double = 0.0  // 追蹤最後收到的消息 ID
     
     // ==================== 公開方法 ====================
     
@@ -171,6 +172,7 @@ class SocketIOManager(
             on("messages", onMessages)
             on("message_received", onMessageReceived)
             on("agent_done", onAgentDone)
+            on("sync_done", onSyncDone)
             on("error", onError)
         }
     }
@@ -247,6 +249,12 @@ class SocketIOManager(
             )
             
             Log.d(TAG, "📬 收到新訊息：${message.content.take(50)}...")
+            
+            // 更新最後消息 ID（防止重複）
+            if (message.id > lastMessageId) {
+                lastMessageId = message.id
+            }
+            
             notifyMessage(message)
             
         } catch (e: Exception) {
@@ -270,6 +278,11 @@ class SocketIOManager(
                     timestamp = msgJson.getString("timestamp"),
                     streaming = msgJson.optBoolean("streaming", false)
                 )
+                
+                // 更新最後消息 ID
+                if (message.id > lastMessageId) {
+                    lastMessageId = message.id
+                }
                 
                 notifyMessage(message)
             }
@@ -300,6 +313,16 @@ class SocketIOManager(
         }
     }
     
+    private val onSyncDone = Emitter.Listener { args ->
+        try {
+            val data = args[0] as JSONObject
+            val count = data.getInt("message_count")
+            Log.i(TAG, "🔄 同步完成：$count 條未讀訊息已推送")
+        } catch (e: Exception) {
+            Log.e(TAG, "解析 sync_done 事件失敗", e)
+        }
+    }
+    
     private val onError = Emitter.Listener { args ->
         try {
             val data = args[0] as JSONObject
@@ -317,10 +340,11 @@ class SocketIOManager(
         try {
             val data = JSONObject().apply {
                 put("device_id", deviceId)
+                put("last_message_id", lastMessageId)  // 發送最後消息 ID
             }
             
             socket?.emit("register", data)
-            Log.i(TAG, "發送註冊請求：$deviceId")
+            Log.i(TAG, "發送註冊請求：$deviceId (last_msg_id=$lastMessageId)")
             
         } catch (e: JSONException) {
             Log.e(TAG, "註冊裝置失敗", e)

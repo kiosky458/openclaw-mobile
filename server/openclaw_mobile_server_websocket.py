@@ -68,8 +68,10 @@ def handle_disconnect():
 
 @socketio.on('register')
 def handle_register(data):
-    """註冊裝置"""
+    """註冊裝置（支持重連後推送未讀消息）"""
     device_id = data.get('device_id')
+    last_message_id = data.get('last_message_id', 0)  # 客戶端最後收到的消息 ID
+    
     if not device_id:
         emit('error', {'message': '缺少 device_id'})
         return
@@ -80,16 +82,32 @@ def handle_register(data):
     # 加入專屬 room
     join_room(device_id)
     
-    logging.info(f"📱 裝置已註冊：{device_id} (sid={request.sid})")
+    logging.info(f"📱 裝置已註冊：{device_id} (sid={request.sid}, last_msg_id={last_message_id})")
     emit('registered', {'device_id': device_id, 'status': 'ok'})
     
-    # 如果有未讀消息，立即推送
+    # 🔄 推送未讀消息（握手機制）
     if device_id in active_conversations:
         messages = active_conversations[device_id]['messages']
-        if messages:
-            logging.info(f"📬 推送 {len(messages)} 條歷史訊息到 {device_id}")
-            emit('messages', {'messages': messages}, room=device_id)
-
+        
+        # 過濾出新消息（ID 大於 last_message_id）
+        unread_messages = [
+            msg for msg in messages
+            if msg['id'] > last_message_id
+        ]
+        
+        if unread_messages:
+            logging.info(f"📬 推送 {len(unread_messages)} 條未讀訊息到 {device_id}")
+            
+            # 逐條推送（避免一次性太多）
+            for msg in unread_messages:
+                emit('new_message', {'message': msg}, room=device_id)
+                time.sleep(0.05)  # 50ms 間隔
+            
+            # 發送同步完成通知
+            emit('sync_done', {
+                'status': 'ok',
+                'message_count': len(unread_messages)
+            }, room=device_id)
 @socketio.on('send_message')
 def handle_send_message(data):
     """處理發送訊息"""
@@ -114,7 +132,7 @@ def handle_send_message(data):
 # ==================== Agent 處理（WebSocket 版本）====================
 
 def process_agent_message_websocket(device_id, agent_id, message):
-    """處理 Agent 訊息（WebSocket 即時推送版本）"""
+    """處理 Agent 訊息（WebSocket 推送版本）"""
     try:
         # 根據 agent_id 選擇 agent
         agent_map = {
@@ -132,68 +150,65 @@ def process_agent_message_websocket(device_id, agent_id, message):
         
         logging.info(f"🚀 執行指令：{' '.join(cmd)}")
         
-        # 使用 Popen 實時讀取輸出
+        # 先用簡單的 communicate() 方式（穩定版）
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1  # 行緩衝
+            text=True
         )
         
         if device_id not in active_conversations:
             active_conversations[device_id] = {'messages': [], 'last_activity': time.time()}
         
         conversation = active_conversations[device_id]
-        message_count = 0
         
-        # 實時逐行讀取並推送
         try:
-            for line in iter(process.stdout.readline, ''):
-                if not line:
-                    break
-                
-                line = line.rstrip()
-                
-                # 過濾掉 OpenClaw 的 banner 和日誌訊息
-                if line and not line.startswith('🦞') and not line.startswith('[') and not line.startswith('error:'):
-                    # 建立訊息對象
-                    msg = {
-                        'id': time.time(),
-                        'content': line,
-                        'from': 'agent',
-                        'timestamp': str(datetime.now()),
-                        'streaming': True
-                    }
-                    
-                    # 添加到對話歷史
-                    conversation['messages'].append(msg)
-                    conversation['last_activity'] = time.time()
-                    message_count += 1
-                    
-                    # 立即推送到客戶端（即時效果！）
-                    if device_id in connected_devices:
-                        socketio.emit('new_message', {'message': msg}, room=device_id)
-                        logging.debug(f"📤 即時推送：{line[:50]}...")
+            stdout, stderr = process.communicate(timeout=120)
             
-            # 等待進程結束
-            process.wait(timeout=120)
+            message_count = 0
+            
+            # 處理輸出並逐行推送
+            if stdout:
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    # 過濾掉 OpenClaw 的 banner 和日誌訊息
+                    if line and not line.startswith('🦞') and not line.startswith('[') and not line.startswith('error:'):
+                        # 建立訊息對象
+                        msg = {
+                            'id': time.time(),
+                            'content': line,
+                            'from': 'agent',
+                            'timestamp': str(datetime.now()),
+                            'streaming': False
+                        }
+                        
+                        # 添加到對話歷史
+                        conversation['messages'].append(msg)
+                        conversation['last_activity'] = time.time()
+                        message_count += 1
+                        
+                        # 推送到客戶端
+                        if device_id in connected_devices:
+                            socketio.emit('new_message', {'message': msg}, room=device_id)
+                            logging.info(f"📤 推送訊息：{line[:50]}...")
+                        
+                        # 避免推送過快
+                        time.sleep(0.05)
             
             # 如果沒有任何輸出，檢查 stderr
-            if message_count == 0:
-                stderr = process.stderr.read()
-                if stderr:
-                    logging.warning(f"⚠️ Agent stderr：{stderr[:500]}")
-                    error_msg = {
-                        'id': time.time(),
-                        'content': f'Agent 錯誤：{stderr[:500]}',
-                        'from': 'system',
-                        'timestamp': str(datetime.now())
-                    }
-                    conversation['messages'].append(error_msg)
-                    
-                    if device_id in connected_devices:
-                        socketio.emit('new_message', {'message': error_msg}, room=device_id)
+            if message_count == 0 and stderr:
+                logging.warning(f"⚠️ Agent stderr：{stderr[:500]}")
+                error_msg = {
+                    'id': time.time(),
+                    'content': f'Agent 錯誤：{stderr[:500]}',
+                    'from': 'system',
+                    'timestamp': str(datetime.now())
+                }
+                conversation['messages'].append(error_msg)
+                
+                if device_id in connected_devices:
+                    socketio.emit('new_message', {'message': error_msg}, room=device_id)
             
             # 發送完成通知
             if device_id in connected_devices:
@@ -202,7 +217,7 @@ def process_agent_message_websocket(device_id, agent_id, message):
                     'message_count': message_count
                 }, room=device_id)
             
-            logging.info(f"✅ {agent_id} 回應完成：{message_count} 條訊息（WebSocket 即時推送）")
+            logging.info(f"✅ {agent_id} 回應完成：{message_count} 條訊息（WebSocket 推送）")
             
         except subprocess.TimeoutExpired:
             process.kill()
@@ -236,7 +251,6 @@ def process_agent_message_websocket(device_id, agent_id, message):
         
         if device_id in connected_devices:
             socketio.emit('new_message', {'message': error_msg}, room=device_id)
-
 # ==================== HTTP API（保留用於測試）====================
 
 @app.route('/api/health', methods=['GET'])
